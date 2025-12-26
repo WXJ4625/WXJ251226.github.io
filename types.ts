@@ -34,4 +34,5 @@ export interface StoryboardState {
   history: HistoryItem[];
   isGeneratingText: boolean;
   videoResolution: '720p' | '1080p';
+  videoDuration: 5 | 10 | 15;
 }

@@ -26,6 +26,7 @@ const App: React.FC = () => {
     history: [],
     isGeneratingText: false,
     videoResolution: '720p',
+    videoDuration: 5,
   });
 
   const historyEndRef = useRef<HTMLDivElement>(null);
@@ -101,8 +102,8 @@ const App: React.FC = () => {
       handleUpdateScene(id, {
         ...updatedData,
         isGenerating: false,
-        imageUrl: undefined, // 重写脚本后清除旧图
-        videoUrl: undefined  // 重写脚本后清除旧视频
+        imageUrl: undefined,
+        videoUrl: undefined
       });
       addHistory(`第 ${targetScene.sceneNumber} 场脚本已更新`);
     } catch (error) {
@@ -153,16 +154,16 @@ const App: React.FC = () => {
     const targetScene = state.scenes.find(s => s.id === id);
     if (!targetScene) return;
     handleUpdateScene(id, { isVideoGenerating: true });
-    addHistory(`开始渲染第 ${targetScene.sceneNumber} 场视频 (耗时较长)`);
+    addHistory(`渲染第 ${targetScene.sceneNumber} 场视频 (${state.videoDuration}秒)`);
     try {
-      const videoUrl = await geminiService.generateVideo(targetScene, state.productAssets, state.videoResolution);
+      const videoUrl = await geminiService.generateVideo(targetScene, state.productAssets, state.videoResolution, state.videoDuration);
       handleUpdateScene(id, { videoUrl, isVideoGenerating: false });
       addHistory(`第 ${targetScene.sceneNumber} 场视频生成完成`);
     } catch (error: any) {
       console.error(error);
       if (error.message?.includes("Requested entity was not found")) {
         setHasKey(false);
-        alert("API Key 无效或已过期，请重新选择付费项目 Key。");
+        alert("API Key 无效，请重新选择。");
       } else {
         alert("视频生成失败。");
       }
@@ -173,7 +174,7 @@ const App: React.FC = () => {
 
   const handleGenerateAllVideos = async () => {
     if (state.scenes.length === 0) return;
-    const confirmRender = window.confirm(`即将生成 ${state.scenes.length} 个视频，这可能需要较长时间，确定继续吗？`);
+    const confirmRender = window.confirm(`即将顺序生成 ${state.scenes.length} 个视频，确定继续吗？`);
     if (!confirmRender) return;
     for (const scene of state.scenes) {
       await handleGenerateSceneVideo(scene.id);
@@ -193,7 +194,7 @@ const App: React.FC = () => {
             mimeType: file.type
           };
           setState(prev => ({ ...prev, productAssets: [...prev.productAssets, asset] }));
-          addHistory(`已添加产品参考：${file.name}`);
+          addHistory(`添加参考：${file.name}`);
         };
         reader.readAsDataURL(file);
       });
@@ -205,7 +206,7 @@ const App: React.FC = () => {
       ...prev,
       productAssets: prev.productAssets.filter(a => a.id !== id)
     }));
-    addHistory("移除了一项产品参考资源");
+    addHistory("移除参考资源");
   };
 
   const downloadAllVideos = () => {
@@ -214,150 +215,196 @@ const App: React.FC = () => {
       alert("尚未生成任何视频。");
       return;
     }
-    addHistory("正在打包导出所有视频...");
+    addHistory("顺序下载所有视频...");
     scenesWithVideos.forEach((scene, index) => {
       setTimeout(() => {
         const link = document.createElement('a');
         link.href = scene.videoUrl!;
-        link.download = `视频_${scene.sceneNumber.toString().padStart(2, '0')}.mp4`;
+        link.download = `S${scene.sceneNumber.toString().padStart(2, '0')}_Scene.mp4`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-      }, index * 500);
+      }, index * 800);
     });
   };
 
+  const exportAllDescriptions = () => {
+    if (state.scenes.length === 0) {
+      alert("尚未生成脚本内容。");
+      return;
+    }
+    const content = state.scenes.map(s => (
+      `场次 ${s.sceneNumber}\n` +
+      `镜头构图: ${s.cameraAngle}\n` +
+      `画面描述: ${s.description}\n` +
+      `灯光氛围: ${s.lighting}\n` +
+      `产品动作: ${s.productAction}\n` +
+      `--------------------------\n`
+    )).join('\n');
+
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `分镜脚本_${new Date().toLocaleDateString()}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addHistory("导出了全部分镜描述文本");
+  };
+
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row bg-[#f8fafc]">
+    <div className="min-h-screen flex flex-col bg-[#f1f5f9]">
       {!hasKey && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-6 text-center">
-          <div className="bg-white rounded-3xl p-10 max-w-md shadow-2xl">
-            <h2 className="text-2xl font-black text-slate-900 mb-4">需要付费 API Key</h2>
-            <p className="text-slate-500 mb-8 font-medium">使用 Veo 视频生成功能需要有效的 API Key。</p>
-            <button onClick={handleOpenKeyDialog} className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100">选择 API Key</button>
+        <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6 text-center">
+          <div className="bg-white rounded-[2.5rem] p-12 max-w-md shadow-2xl">
+            <h2 className="text-3xl font-black text-slate-900 mb-6 tracking-tight">需要付费 API Key</h2>
+            <p className="text-slate-500 mb-10 font-medium leading-relaxed">检测到未选择 API Key。生成视频需要从付费 GCP 项目中授权。</p>
+            <button onClick={handleOpenKeyDialog} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 transform transition hover:scale-105 active:scale-95">选择 API Key</button>
           </div>
         </div>
       )}
 
-      <aside className="lg:w-[420px] bg-white border-r border-slate-200 p-6 flex flex-col gap-6 h-screen overflow-y-auto sticky top-0 z-20 shadow-sm">
-        <header className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-xl rotate-3">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-slate-800 tracking-tight leading-none">分镜大师 AI</h1>
-            <p className="text-[9px] font-bold text-indigo-500 uppercase tracking-[0.2em] mt-1">专业制作版 v4.1</p>
-          </div>
-        </header>
-
-        <div className="flex flex-col gap-5">
-          <section className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">剧情大纲</label>
-            <textarea
-              className="w-full h-24 p-3 rounded-xl border border-slate-200 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 transition-all text-xs outline-none bg-slate-50/30 font-medium"
-              placeholder="描述您的剧本内容..."
-              value={state.plot}
-              onChange={(e) => setState(prev => ({ ...prev, plot: e.target.value }))}
-            />
-          </section>
-
-          <section className="space-y-2">
-            <label className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">镜头风格指令</label>
-            <textarea
-              className="w-full h-16 p-3 rounded-xl border border-slate-200 focus:ring-4 focus:ring-indigo-500/5 transition-all text-xs outline-none bg-indigo-50/10 font-medium"
-              placeholder="例如：俯拍、微距特写、快剪感..."
-              value={state.cameraStyle}
-              onChange={(e) => setState(prev => ({ ...prev, cameraStyle: e.target.value }))}
-            />
-          </section>
-
-          <div className="grid grid-cols-2 gap-3">
-            <section className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col gap-1">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">视频分辨率</span>
-              <select 
-                className="bg-transparent font-bold text-indigo-600 text-xs outline-none cursor-pointer"
-                value={state.videoResolution}
-                onChange={(e) => setState(prev => ({ ...prev, videoResolution: e.target.value as '720p' | '1080p' }))}
-              >
-                <option value="720p">720p</option>
-                <option value="1080p">1080p</option>
-              </select>
-            </section>
-            <section className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col gap-1">
-              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">分镜数量</span>
-              <input
-                type="number"
-                min="1" max="50"
-                className="bg-transparent font-bold text-indigo-600 text-xs outline-none w-full"
-                value={state.sceneCount}
-                onChange={(e) => setState(prev => ({ ...prev, sceneCount: Math.min(50, Math.max(1, parseInt(e.target.value) || 1)) }))}
-              />
-            </section>
-          </div>
-
-          <button
-            onClick={handleGenerateScript}
-            disabled={state.isGeneratingText || !state.plot}
-            className="w-full py-3 bg-indigo-600 text-white rounded-xl font-black shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 uppercase text-[10px] tracking-widest transition-transform active:scale-95"
-          >
-            {state.isGeneratingText ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span> : '生成脚本'}
-          </button>
-        </div>
-
-        <section className="space-y-3">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">产品参考 (图片/视频)</label>
-          <div className="grid grid-cols-4 gap-2">
-            {state.productAssets.map(asset => (
-              <div key={asset.id} className="relative aspect-square rounded-lg overflow-hidden bg-slate-100 border border-slate-200 group">
-                {asset.type === 'image' ? (
-                  <img src={asset.data} className="w-full h-full object-cover" />
-                ) : (
-                  <video src={asset.data} className="w-full h-full object-cover" />
-                )}
-                <button onClick={() => removeAsset(asset.id)} className="absolute inset-0 bg-red-600/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
-                   <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/></svg>
-                </button>
+      {/* 顶部控制面板 */}
+      <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-30">
+        <div className="max-w-[1600px] mx-auto p-6 flex flex-col gap-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-xl rotate-3">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
               </div>
-            ))}
-            <label className="flex flex-col items-center justify-center aspect-square border-2 border-dashed border-slate-200 rounded-lg hover:border-indigo-400 bg-white cursor-pointer transition-colors">
-              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
-              <input type="file" className="hidden" accept="image/*,video/*" multiple onChange={handleFileUpload} />
-            </label>
-          </div>
-        </section>
+              <div>
+                <h1 className="text-2xl font-black text-slate-800 tracking-tighter">AI 分镜大师</h1>
+                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-[0.2em] mt-0.5">Mobile Video Pro v5.0</p>
+              </div>
+            </div>
 
-        <section className="mt-auto border-t border-slate-100 pt-4 flex flex-col gap-4 overflow-hidden">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">操作历史记录</label>
-          <div className="h-32 overflow-y-auto bg-slate-50 rounded-xl p-3 flex flex-col gap-2 font-mono text-[9px] text-slate-500">
-            {state.history.length === 0 ? (
-              <div className="text-slate-300 italic">暂无记录</div>
-            ) : (
-              state.history.map(item => (
-                <div key={item.id} className="flex gap-2 border-l-2 border-indigo-200 pl-2">
-                  <span className="opacity-50">{new Date(item.timestamp).toLocaleTimeString()}</span>
-                  <span className="text-slate-700 font-bold">{item.action}</span>
+            <div className="flex gap-3">
+              <button 
+                onClick={exportAllDescriptions}
+                disabled={state.scenes.length === 0}
+                className="px-6 py-3 bg-white border border-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm hover:bg-slate-50 disabled:opacity-30 transition-all"
+              >
+                导出脚本
+              </button>
+              <button 
+                onClick={downloadAllVideos}
+                disabled={state.scenes.filter(s => !!s.videoUrl).length === 0}
+                className="px-6 py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg hover:bg-slate-800 disabled:opacity-30 transition-all"
+              >
+                下载所有视频
+              </button>
+              <button 
+                onClick={handleGenerateAllVideos}
+                disabled={state.scenes.length === 0}
+                className="px-6 py-3 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-30 transition-all"
+              >
+                一键渲染全部
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+            <div className="md:col-span-5 flex flex-col gap-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">剧情描述 & 风格</label>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <textarea
+                  className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 transition-all text-sm outline-none bg-slate-50/50 font-medium leading-relaxed resize-none"
+                  placeholder="输入您的视频创意大纲..."
+                  value={state.plot}
+                  onChange={(e) => setState(prev => ({ ...prev, plot: e.target.value }))}
+                />
+                <textarea
+                  className="w-full h-24 p-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-500/5 transition-all text-sm outline-none bg-indigo-50/10 font-medium leading-relaxed resize-none"
+                  placeholder="镜头风格要求 (如：快剪、极简、暖色)..."
+                  value={state.cameraStyle}
+                  onChange={(e) => setState(prev => ({ ...prev, cameraStyle: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="md:col-span-3 flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">产品参考素材</label>
+                {state.productAssets.length > 0 && (
+                  <span className="text-[9px] font-black bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full uppercase tracking-tighter flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                    结构一致性已激活
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                <label className="flex-shrink-0 flex flex-col items-center justify-center w-24 h-24 border-2 border-dashed border-slate-200 rounded-2xl hover:border-indigo-400 bg-slate-50 cursor-pointer transition-all">
+                  <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                  <input type="file" className="hidden" accept="image/*,video/*" multiple onChange={handleFileUpload} />
+                </label>
+                {state.productAssets.map(asset => (
+                  <div key={asset.id} className="relative flex-shrink-0 w-24 h-24 rounded-2xl overflow-hidden bg-slate-200 group border border-slate-200">
+                    {asset.type === 'image' ? (
+                      <img src={asset.data} className="w-full h-full object-cover" />
+                    ) : (
+                      <video src={asset.data} className="w-full h-full object-cover" />
+                    )}
+                    <button onClick={() => removeAsset(asset.id)} className="absolute inset-0 bg-red-600/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
+                       <svg width="18" height="18" fill="currentColor" viewBox="0 0 16 16"><path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/></svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="md:col-span-4 flex items-end gap-3">
+              <div className="flex-grow grid grid-cols-3 gap-3">
+                <div className="bg-slate-100/50 p-3 rounded-2xl border border-slate-200/50">
+                  <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">分辨率</span>
+                  <select 
+                    className="w-full bg-transparent font-black text-slate-800 text-xs outline-none appearance-none"
+                    value={state.videoResolution}
+                    onChange={(e) => setState(prev => ({ ...prev, videoResolution: e.target.value as '720p' | '1080p' }))}
+                  >
+                    <option value="720p">720p HD</option>
+                    <option value="1080p">1080p FHD</option>
+                  </select>
                 </div>
-              ))
-            )}
-            <div ref={historyEndRef} />
+                <div className="bg-slate-100/50 p-3 rounded-2xl border border-slate-200/50">
+                  <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">时长</span>
+                  <select 
+                    className="w-full bg-transparent font-black text-slate-800 text-xs outline-none appearance-none"
+                    value={state.videoDuration}
+                    onChange={(e) => setState(prev => ({ ...prev, videoDuration: parseInt(e.target.value) as any }))}
+                  >
+                    <option value={5}>5秒</option>
+                    <option value={10}>10秒</option>
+                    <option value={15}>15秒</option>
+                  </select>
+                </div>
+                <div className="bg-slate-100/50 p-3 rounded-2xl border border-slate-200/50">
+                  <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">分镜数</span>
+                  <input
+                    type="number"
+                    className="w-full bg-transparent font-black text-slate-800 text-xs outline-none"
+                    value={state.sceneCount}
+                    onChange={(e) => setState(prev => ({ ...prev, sceneCount: Math.min(50, Math.max(1, parseInt(e.target.value) || 1)) }))}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={handleGenerateScript}
+                disabled={state.isGeneratingText || !state.plot}
+                className="px-8 py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-30 transition-all flex items-center gap-3"
+              >
+                {state.isGeneratingText ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span> : '生成脚本'}
+              </button>
+            </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={downloadAllVideos} disabled={state.scenes.filter(s => !!s.videoUrl).length === 0} className="py-3 bg-slate-900 text-white rounded-xl text-[9px] font-black uppercase tracking-tighter disabled:opacity-30">导出视频</button>
-            <button onClick={handleGenerateAllVideos} disabled={state.scenes.length === 0} className="py-3 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-tighter disabled:opacity-30">一键生成</button>
-          </div>
-        </section>
-      </aside>
+        </div>
+      </header>
 
-      <main className="flex-grow p-8 overflow-y-auto max-h-screen">
-        <header className="mb-8 border-b border-slate-200 pb-6 flex justify-between items-end">
-          <div>
-            <h2 className="text-3xl font-black text-slate-900 tracking-tighter">分镜制作面板</h2>
-            <p className="text-slate-400 font-bold uppercase text-[9px] tracking-[0.3em]">AI 视觉序列工作流</p>
-          </div>
-        </header>
-
+      {/* 主体分镜展示区 */}
+      <main className="flex-grow max-w-[1600px] mx-auto w-full p-8 overflow-y-auto">
         {state.scenes.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
             {state.scenes.map((scene) => (
               <SceneCard
                 key={scene.id}
@@ -371,11 +418,32 @@ const App: React.FC = () => {
             ))}
           </div>
         ) : (
-          <div className="h-[60vh] flex flex-col items-center justify-center text-center bg-white rounded-[2rem] border-2 border-dashed border-slate-200 p-12 shadow-sm">
-             <h3 className="text-2xl font-black text-slate-800 mb-4 tracking-tight">等待剧本输入</h3>
-             <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest max-w-xs">请在左侧侧边栏上传产品参考并输入您的剧情构想。</p>
+          <div className="h-[50vh] flex flex-col items-center justify-center text-center bg-white rounded-[3rem] border border-slate-200 p-20 shadow-sm mt-10">
+             <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center text-slate-300 mb-8">
+               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+             </div>
+             <h3 className="text-3xl font-black text-slate-800 mb-4 tracking-tighter">创意正在就绪</h3>
+             <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest max-w-sm leading-relaxed">请在上方输入剧情描述并上传参考，点击生成按钮开始创作 9:16 的精彩分镜。</p>
           </div>
         )}
+
+        {/* 底部历史记录悬浮窗 */}
+        <div className="mt-20 border-t border-slate-200 pt-10 pb-20">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 block">工作流日志</label>
+          <div className="bg-slate-900 rounded-[2rem] p-8 shadow-2xl max-h-60 overflow-y-auto font-mono text-xs text-indigo-200/60 leading-relaxed scrollbar-hide">
+            {state.history.length === 0 ? (
+              <div className="italic text-slate-700">等待操作中...</div>
+            ) : (
+              state.history.map(item => (
+                <div key={item.id} className="flex gap-4 mb-2 hover:text-indigo-300 transition-colors">
+                  <span className="opacity-30 whitespace-nowrap">[{new Date(item.timestamp).toLocaleTimeString()}]</span>
+                  <span className="text-indigo-100/90 font-medium">{item.action}</span>
+                </div>
+              ))
+            )}
+            <div ref={historyEndRef} />
+          </div>
+        </div>
       </main>
     </div>
   );

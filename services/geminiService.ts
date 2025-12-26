@@ -10,16 +10,22 @@ export class GeminiService {
   async generateScenes(plot: string, styleInstructions: string, count: number, assets: ProductAsset[]): Promise<Partial<Scene>[]> {
     const ai = this.getAI();
     const parts: any[] = [
-      { text: `你是一位专业的导演和分镜师。
-                 请根据以下剧情大纲： "${plot}"。
-                 并应用这些特定的镜头/镜头风格指南： "${styleInstructions}"。
+      { text: `你是一位顶级导演和分镜专家。
+                 核心任务：根据剧情大纲 "${plot}" 生成专业分镜。
+                 风格要求："${styleInstructions}"。
+                 画幅：9:16 纵向。
                  
-                 请生成一个包含恰好 ${count} 个场景的详细专业分镜 JSON。
-                 要求：
-                 1. "cameraAngle": 必须使用专业的中文摄影术语（如：特写、俯拍、仰拍、推镜头、拉镜头、环绕镜头等）。
-                 2. "description": 描述视觉构图，重点关注演员和环境。
-                 3. "productAction": 详细描述产品在镜头中的物理位置或运动。
-                 4. 如果提供了产品参考图，请分析其结构，并确保分镜设计能完美展示该产品的结构特点。` }
+                 重要：参考图中展示了核心产品。在设计分镜时，必须：
+                 1. 深入分析产品的物理结构、比例和独特细节。
+                 2. 分镜描述中应指明如何通过构图展现产品的精细特征。
+                 3. "productAction": 详细描述产品如何运动，且运动必须符合其物理结构。
+                 
+                 请生成一个包含恰好 ${count} 个场景的 JSON。
+                 字段要求：
+                 - "cameraAngle": 专业中文术语（如：微距特写、环绕推镜）。
+                 - "description": 视觉描述，强调产品在 9:16 构图中的位置。
+                 - "lighting": 氛围灯光设计。
+                 - "productAction": 产品具体的物理反馈或位移。` }
     ];
 
     assets.forEach(asset => {
@@ -64,17 +70,15 @@ export class GeminiService {
     const ai = this.getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `你是一位专业的导演和分镜师。
-                 全局剧情大纲： "${plot}"。
-                 风格指南： "${styleInstructions}"。
+      contents: `重写分镜脚本。全局大纲："${plot}"，风格："${styleInstructions}"。
+                 当前第 ${sceneNumber} 场内容： "${currentDescription}"。
                  
-                 请重新设计第 ${sceneNumber} 场分镜的脚本。当前内容是 "${currentDescription}"，请提供一个更有创意或更符合风格的新版本。
-                 要求：
-                 1. "cameraAngle": 必须使用专业的中文摄影术语。
-                 2. "description": 视觉构图描述。
-                 3. "productAction": 产品动态描述。
+                 必须确保：
+                 1. 维持 9:16 纵向构图。
+                 2. 完美适配参考图中产品的结构细节。
+                 3. 创意升级，镜头感更强。
                  
-                 仅返回这一个场景的 JSON 对象。`,
+                 仅返回 JSON 格式。`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -99,16 +103,18 @@ export class GeminiService {
   async generateImage(scene: Scene, assets: ProductAsset[]): Promise<string> {
     const ai = this.getAI();
     const prompt = `
-      STORYBOARD PRODUCTION FRAME.
-      CAMERA DIRECTION: ${scene.cameraAngle}.
-      SCENE DESCRIPTION: ${scene.description}. 
-      LIGHTING DESIGN: ${scene.lighting}. 
-      PRODUCT SPECIFICS: ${scene.productAction}. 
+      STORYBOARD FRAME: 9:16 PORTRAIT.
+      PRODUCT CONSISTENCY PROTOCOL: MANDATORY.
       
-      TECHNICAL STIPULATIONS:
-      - Strictly render from the angle: ${scene.cameraAngle}.
-      - Please preserve the product's structure, branding, and shape from the provided reference images.
-      - Style: Clean cinematic concept art, highly legible for production crews.
+      SCENE: ${scene.description}.
+      ANGLE: ${scene.cameraAngle}.
+      LIGHT: ${scene.lighting}.
+      ACTION: ${scene.productAction}.
+      
+      TECHNICAL INSTRUCTIONS:
+      - THE PRODUCT IN THIS IMAGE MUST BE IDENTICAL TO THE PROVIDED REFERENCE IMAGES.
+      - MAINTAIN ALL PHYSICAL STRUCTURES, LOGOS, BUTTONS, TEXTURES, AND SHAPES.
+      - Render as a high-quality cinematic production storyboard.
     `;
     
     const parts: any[] = [{ text: prompt }];
@@ -127,7 +133,7 @@ export class GeminiService {
       contents: { parts },
       config: {
         imageConfig: {
-          aspectRatio: "16:9"
+          aspectRatio: "9:16"
         }
       }
     });
@@ -141,21 +147,29 @@ export class GeminiService {
     throw new Error("画面生成失败");
   }
 
-  async generateVideo(scene: Scene, assets: ProductAsset[], resolution: '720p' | '1080p'): Promise<string> {
+  async generateVideo(scene: Scene, assets: ProductAsset[], resolution: '720p' | '1080p', duration: number): Promise<string> {
     const ai = this.getAI();
-    const prompt = `电影级视频：${scene.description}。镜头：${scene.cameraAngle}。灯光：${scene.lighting}。产品动作：${scene.productAction}。保持产品结构一致。专业质量。`;
+    // 极其严厉地要求产品一致性
+    const prompt = `9:16 PORTRAIT VIDEO. PRODUCT CONSISTENCY IS TOP PRIORITY. 
+      The product MUST look exactly like the reference images in terms of structure, material, and details.
+      Content: ${scene.description}. 
+      Camera: ${scene.cameraAngle}. 
+      Lighting: ${scene.lighting}. 
+      Movement: ${scene.productAction}.
+      Duration: ${duration} seconds.`;
     
     const images = assets.filter(a => a.type === 'image');
     
     let operation;
     
-    if (images.length > 1) {
+    // 使用 Veo 3.1 并在配置中传入参考图
+    if (images.length > 0) {
       const referenceImages: VideoGenerationReferenceImage[] = images.slice(0, 3).map(asset => ({
         image: {
           imageBytes: asset.data.split(',')[1],
           mimeType: asset.mimeType,
         },
-        referenceType: VideoGenerationReferenceType.ASSET,
+        referenceType: VideoGenerationReferenceType.ASSET, // 使用 ASSET 类型确保产品一致性
       }));
 
       operation = await ai.models.generateVideos({
@@ -164,22 +178,18 @@ export class GeminiService {
         config: {
           numberOfVideos: 1,
           referenceImages: referenceImages,
-          resolution: '720p',
-          aspectRatio: '16:9'
+          resolution: '720p', // 保持 720p 以获得更好的参考图遵循度
+          aspectRatio: '9:16'
         }
       });
     } else {
       operation = await ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt: prompt,
-        image: images.length > 0 ? {
-          imageBytes: images[0].data.split(',')[1],
-          mimeType: images[0].mimeType
-        } : undefined,
         config: {
           numberOfVideos: 1,
           resolution: resolution,
-          aspectRatio: '16:9'
+          aspectRatio: '9:16'
         }
       });
     }
