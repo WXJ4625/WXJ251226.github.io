@@ -1,0 +1,7 @@
+{
+  "name": "AI分镜大师=251226-1756",
+  "description": "专业级AI分镜生成器，将剧情描述转化为视觉脚本，支持产品一致性渲染。",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
