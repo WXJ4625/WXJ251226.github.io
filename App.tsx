@@ -16,7 +16,7 @@ declare global {
 }
 
 const App: React.FC = () => {
-  const [hasKey, setHasKey] = useState<boolean>(true);
+  const [hasKey, setHasKey] = useState<boolean>(true); // 默认假设有 key，避免初始闪烁
   const [state, setState] = useState<StoryboardState>({
     plot: '',
     cameraStyle: '',
@@ -55,8 +55,9 @@ const App: React.FC = () => {
   const handleOpenKeyDialog = async () => {
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
+      // 触发后立即假设成功，遵循 SDK 竞态处理建议
       setHasKey(true);
-      addHistory("已选择 API Key");
+      addHistory("已触发 API Key 选择对话框");
     }
   };
 
@@ -147,10 +148,14 @@ const App: React.FC = () => {
   };
 
   const handleGenerateSceneVideo = async (id: string) => {
-    if (!hasKey) {
-      handleOpenKeyDialog();
-      return;
+    if (window.aistudio) {
+      const active = await window.aistudio.hasSelectedApiKey();
+      if (!active) {
+        await handleOpenKeyDialog();
+        return;
+      }
     }
+
     const targetScene = state.scenes.find(s => s.id === id);
     if (!targetScene) return;
     handleUpdateScene(id, { isVideoGenerating: true });
@@ -160,12 +165,12 @@ const App: React.FC = () => {
       handleUpdateScene(id, { videoUrl, isVideoGenerating: false });
       addHistory(`第 ${targetScene.sceneNumber} 场视频生成完成`);
     } catch (error: any) {
-      console.error(error);
+      console.error("Video Generation Error:", error);
       if (error.message?.includes("Requested entity was not found")) {
         setHasKey(false);
-        alert("API Key 无效，请重新选择。");
+        alert("项目授权已过期或无效，请重新选择 API Key。");
       } else {
-        alert("视频生成失败。");
+        alert("视频生成失败，请检查控制台或稍后重试。");
       }
       handleUpdateScene(id, { isVideoGenerating: false });
       addHistory(`第 ${targetScene.sceneNumber} 场视频生成失败`);
@@ -174,9 +179,11 @@ const App: React.FC = () => {
 
   const handleGenerateAllVideos = async () => {
     if (state.scenes.length === 0) return;
-    const confirmRender = window.confirm(`即将顺序生成 ${state.scenes.length} 个视频，确定继续吗？`);
+    const confirmRender = window.confirm(`即将顺序生成 ${state.scenes.length} 个视频（每个约需2-3分钟），确定继续吗？`);
     if (!confirmRender) return;
     for (const scene of state.scenes) {
+      // 如果已经有视频了，跳过以节省资源
+      if (scene.videoUrl) continue;
       await handleGenerateSceneVideo(scene.id);
     }
   };
@@ -260,13 +267,13 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-6 text-center">
           <div className="bg-white rounded-[2.5rem] p-12 max-w-md shadow-2xl">
             <h2 className="text-3xl font-black text-slate-900 mb-6 tracking-tight">需要付费 API Key</h2>
-            <p className="text-slate-500 mb-10 font-medium leading-relaxed">检测到未选择 API Key。生成视频需要从付费 GCP 项目中授权。</p>
+            <p className="text-slate-500 mb-10 font-medium leading-relaxed">检测到未选择有效的 API Key。Veo 视频生成必须关联一个开启结算的付费项目。</p>
             <button onClick={handleOpenKeyDialog} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-xl shadow-indigo-100 transform transition hover:scale-105 active:scale-95">选择 API Key</button>
+            <p className="mt-6 text-[11px] text-slate-400 font-bold">请查阅 <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline text-indigo-500">账单文档</a> 获取更多信息</p>
           </div>
         </div>
       )}
 
-      {/* 顶部控制面板 */}
       <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-30">
         <div className="max-w-[1600px] mx-auto p-6 flex flex-col gap-6">
           <div className="flex items-center justify-between">
@@ -276,7 +283,7 @@ const App: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-black text-slate-800 tracking-tighter">AI 分镜大师</h1>
-                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-[0.2em] mt-0.5">Mobile Video Pro v5.0</p>
+                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-[0.2em] mt-0.5">Mobile Video Pro v5.1</p>
               </div>
             </div>
 
@@ -359,7 +366,7 @@ const App: React.FC = () => {
                 <div className="bg-slate-100/50 p-3 rounded-2xl border border-slate-200/50">
                   <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">分辨率</span>
                   <select 
-                    className="w-full bg-transparent font-black text-slate-800 text-xs outline-none appearance-none"
+                    className="w-full bg-transparent font-black text-slate-800 text-xs outline-none appearance-none cursor-pointer"
                     value={state.videoResolution}
                     onChange={(e) => setState(prev => ({ ...prev, videoResolution: e.target.value as '720p' | '1080p' }))}
                   >
@@ -370,7 +377,7 @@ const App: React.FC = () => {
                 <div className="bg-slate-100/50 p-3 rounded-2xl border border-slate-200/50">
                   <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">时长</span>
                   <select 
-                    className="w-full bg-transparent font-black text-slate-800 text-xs outline-none appearance-none"
+                    className="w-full bg-transparent font-black text-slate-800 text-xs outline-none appearance-none cursor-pointer"
                     value={state.videoDuration}
                     onChange={(e) => setState(prev => ({ ...prev, videoDuration: parseInt(e.target.value) as any }))}
                   >
@@ -392,7 +399,7 @@ const App: React.FC = () => {
               <button
                 onClick={handleGenerateScript}
                 disabled={state.isGeneratingText || !state.plot}
-                className="px-8 py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-30 transition-all flex items-center gap-3"
+                className="px-8 py-5 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-30 transition-all flex items-center gap-3 active:scale-95"
               >
                 {state.isGeneratingText ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span> : '生成脚本'}
               </button>
@@ -401,9 +408,8 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* 主体分镜展示区 */}
       <main className="flex-grow max-w-[1600px] mx-auto w-full p-8 overflow-y-auto">
-        {state.scenes.length > 0 ? (
+        {state.scenes.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-10">
             {state.scenes.map((scene) => (
               <SceneCard
@@ -417,17 +423,8 @@ const App: React.FC = () => {
               />
             ))}
           </div>
-        ) : (
-          <div className="h-[50vh] flex flex-col items-center justify-center text-center bg-white rounded-[3rem] border border-slate-200 p-20 shadow-sm mt-10">
-             <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center text-slate-300 mb-8">
-               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-             </div>
-             <h3 className="text-3xl font-black text-slate-800 mb-4 tracking-tighter">创意正在就绪</h3>
-             <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest max-w-sm leading-relaxed">请在上方输入剧情描述并上传参考，点击生成按钮开始创作 9:16 的精彩分镜。</p>
-          </div>
         )}
 
-        {/* 底部历史记录悬浮窗 */}
         <div className="mt-20 border-t border-slate-200 pt-10 pb-20">
           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 block">工作流日志</label>
           <div className="bg-slate-900 rounded-[2rem] p-8 shadow-2xl max-h-60 overflow-y-auto font-mono text-xs text-indigo-200/60 leading-relaxed scrollbar-hide">

@@ -4,6 +4,7 @@ import { Scene, ProductAsset } from "../types";
 
 export class GeminiService {
   private getAI() {
+    // 每次调用都创建新实例以获取最新的 API Key
     return new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
@@ -149,36 +150,31 @@ export class GeminiService {
 
   async generateVideo(scene: Scene, assets: ProductAsset[], resolution: '720p' | '1080p', duration: number): Promise<string> {
     const ai = this.getAI();
-    // 极其严厉地要求产品一致性
     const prompt = `9:16 PORTRAIT VIDEO. PRODUCT CONSISTENCY IS TOP PRIORITY. 
-      The product MUST look exactly like the reference images in terms of structure, material, and details.
-      Content: ${scene.description}. 
+      The product MUST look exactly like the reference images.
+      Scene Detail: ${scene.description}. 
       Camera: ${scene.cameraAngle}. 
       Lighting: ${scene.lighting}. 
       Movement: ${scene.productAction}.
-      Duration: ${duration} seconds.`;
+      Target Duration: ${duration}s. Cinematic quality.`;
     
     const images = assets.filter(a => a.type === 'image');
     
     let operation;
     
-    // 使用 Veo 3.1 并在配置中传入参考图
+    // 注意：referenceImages 仅支持 16:9 画幅。
+    // 对于用户要求的 9:16 画幅，我们使用 'image' 参数（首帧参考）配合 veo-3.1-fast-generate-preview。
     if (images.length > 0) {
-      const referenceImages: VideoGenerationReferenceImage[] = images.slice(0, 3).map(asset => ({
-        image: {
-          imageBytes: asset.data.split(',')[1],
-          mimeType: asset.mimeType,
-        },
-        referenceType: VideoGenerationReferenceType.ASSET, // 使用 ASSET 类型确保产品一致性
-      }));
-
       operation = await ai.models.generateVideos({
-        model: 'veo-3.1-generate-preview',
+        model: 'veo-3.1-fast-generate-preview',
         prompt: prompt,
+        image: {
+          imageBytes: images[0].data.split(',')[1],
+          mimeType: images[0].mimeType
+        },
         config: {
           numberOfVideos: 1,
-          referenceImages: referenceImages,
-          resolution: '720p', // 保持 720p 以获得更好的参考图遵循度
+          resolution: resolution,
           aspectRatio: '9:16'
         }
       });
@@ -194,16 +190,25 @@ export class GeminiService {
       });
     }
 
+    // 轮询等待生成结果
+    let pollCount = 0;
     while (!operation.done) {
+      pollCount++;
       await new Promise(resolve => setTimeout(resolve, 10000));
       operation = await ai.operations.getVideosOperation({ operation: operation });
+      if (pollCount > 60) throw new Error("视频生成超时（超过10分钟）");
     }
 
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-    if (!downloadLink) throw new Error("视频生成失败");
+    if (!downloadLink) {
+      console.error("Operation Error:", operation.error);
+      throw new Error("视频生成失败: 无法获取下载链接");
+    }
 
-    const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-    const blob = await response.blob();
+    // 获取视频流并转化为可用的 URL
+    const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+    if (!videoResponse.ok) throw new Error("视频文件下载失败");
+    const blob = await videoResponse.blob();
     return URL.createObjectURL(blob);
   }
 }
